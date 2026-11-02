@@ -33,7 +33,7 @@ them. On Linux that layer doesn't exist, so out of the box they sound **thin,
 quiet and boxy**, and on some units **lopsided**.
 
 This project installs a measured speaker tuning as a PipeWire filter, makes
-sure it is actually used, adds a **per-unit left/right balance** you set by ear,
+sure it is actually used, corrects the **right-side lean** (fine-tuned by ear),
 and checks whether your amplifiers loaded the **right Dell tuning firmware**,
 which a BIOS bug can get wrong.
 
