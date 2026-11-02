@@ -2,6 +2,13 @@
 
 <img src="docs/icon.svg" alt="" width="104" height="104">
 
+<br>
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/xps-logo-light.svg">
+  <img src="docs/xps-logo-dark.svg" alt="Dell XPS" width="120">
+</picture>
+
 <h1>XPS 2026 Speakers for Linux</h1>
 
 **Better sound from the Dell XPS 14 and XPS 16 (2026) speakers on Linux.** A measured EQ,<br>
@@ -11,6 +18,8 @@ a left/right balance fix, and a check for the wrong-tuning firmware bug.
 [![Models](https://img.shields.io/badge/XPS%2014%20%C2%B7%20XPS%2016%20(2026)-38BDF8?style=flat-square&labelColor=1c1c1e&label=for)](#supported-hardware)
 [![Distros](https://img.shields.io/badge/any%20PipeWire%20distro-818CF8?style=flat-square&labelColor=1c1c1e&label=runs%20on)](#install)
 [![License](https://img.shields.io/github/license/davidboulay/xps-2026-speakers-linux?style=flat-square&color=6b7280&labelColor=1c1c1e)](LICENSE)
+
+<sub>An independent community project, not affiliated with or endorsed by Dell. XPS and the XPS logo are trademarks of Dell Inc.</sub>
 
 [**Install**](#install) · [What it fixes](#what-it-fixes) · [Balance](#balance) · [A/B test](#compare-by-ear) · [Speaker-ID bug](#the-speaker-id-firmware-bug) · [Troubleshooting](#troubleshooting) · [Project page](https://davidboulay.com/apps/xps-2026-speakers/)
 
