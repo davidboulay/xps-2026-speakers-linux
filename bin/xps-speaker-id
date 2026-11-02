@@ -44,6 +44,14 @@ want=spkid$pin
 echo "Model:            Dell XPS SKU ${sku^^} (firmware tag $tag)"
 echo "Speaker-ID pin:   GPP_E_20 reads $pin  ($line)"
 echo "Correct tuning:   $want"
+if [[ $sku == 0db9 ]]; then
+  if [[ $pin == 0 ]]; then
+    echo "Balance default:  measured on a spkid0 unit like yours (right side down 6.6 dB)"
+  else
+    echo "Balance default:  the 6.6 dB default was measured on a spkid0 unit; yours is spkid1,"
+    echo "                  so it may lean differently. Check by ear: speaker-balance help"
+  fi
+fi
 echo
 loaded=(); wrong=0
 for d in /sys/kernel/debug/asoc/*/sdw:*:01fa:3557:*/DSP1; do

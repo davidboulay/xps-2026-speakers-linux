@@ -1,13 +1,17 @@
 #!/bin/bash
-# speaker-balance [dB|reset]  -- left/right trim for the tuned XPS speakers.
+# speaker-balance [dB|default|help]  -- left/right trim for the tuned XPS speakers.
 #
 #   speaker-balance            show the current trim
-#   speaker-balance 2          turn the RIGHT side down 2 dB
+#   speaker-balance 6.6        turn the RIGHT side down 6.6 dB (the XPS 14 default)
 #   speaker-balance -1.5       turn the LEFT side down 1.5 dB
 #   speaker-balance 0          neutral
+#   speaker-balance default    back to this model's default (XPS 14: 6.6, others: 0)
+#   speaker-balance help       how to tell which way to move it
 #
-# Applies live and is saved in the tuning config, so it survives reboots and
-# reinstalls. Set it by ear with something playing that has a centred voice.
+# The number is how much the RIGHT side is turned down; negative turns the left
+# down instead. Applies live and is saved in the tuning config, so it survives
+# reboots and reinstalls. Adjust by ear with something playing that has a
+# centred voice.
 set -euo pipefail
 CONF="${XDG_CONFIG_HOME:-$HOME/.config}/pipewire/xps-speaker-tuning.conf.d/90-tuning.conf"
 NODE=xps_speaker_tuning
@@ -26,9 +30,30 @@ elif r<1.0: print(f"balance: right side down {db(r):.1f} dB  (L x{l}, R x{r})")
 else: print(f"balance: left side down {db(l):.1f} dB  (L x{l}, R x{r})")' "$l" "$r"
 }
 
+guide() { cat <<'TXT'
+Play something with one voice in the middle, sit centred, and listen:
+
+  Voice sits LEFT of centre    -> the right side is now too quiet: LOWER the number
+                                  (e.g. 6.6 -> 5.5 -> 4.5). Below 0, the left goes down.
+  Voice sits RIGHT of centre   -> the right side is still too loud: RAISE the number
+                                  (e.g. 6.6 -> 7.5 -> 8.5).
+  Voice sits in the middle     -> leave it.
+
+Move 1 dB at a time, then 0.5 to finish. Each change is live.
+TXT
+}
+model_default() {
+  case $(tr 'a-z' 'A-Z' </sys/class/dmi/id/product_sku 2>/dev/null) in 0DB9) echo 6.6;; *) echo 0;; esac
+}
+
 if [[ $# -eq 0 ]]; then current; exit 0; fi
-arg=$1; [[ $arg == reset ]] && arg=0
-[[ $arg =~ ^-?[0-9]+(\.[0-9]+)?$ ]] || { echo "usage: speaker-balance [dB|reset]" >&2; exit 2; }
+arg=$1
+case $arg in
+  reset) arg=0;;
+  default) arg=$(model_default);;
+  help|-h|--help) awk 'NR>1 && /^#/ {sub(/^# ?/,""); print; next} NR>1 {exit}' "$0"; echo; guide; exit 0;;
+esac
+[[ $arg =~ ^-?[0-9]+(\.[0-9]+)?$ ]] || { echo "usage: speaker-balance [dB|default|help]" >&2; exit 2; }
 
 read -r L R < <(python3 -I -c '
 import sys

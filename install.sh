@@ -4,18 +4,21 @@
 #   ./install.sh                      install or update
 #   ./install.sh --force              install on a model other than XPS 14/16 (2026)
 #   ./install.sh --replace-omarchy    switch off Omarchy's own speaker tuning first
+#   ./install.sh --neutral            start with no balance correction (default on the
+#                                     XPS 14: right side down 6.6 dB)
 #
 # Installs into ~/.config/pipewire, ~/.config/systemd/user and ~/.local/bin only.
 # A reinstall keeps your speaker-balance setting.
 set -euo pipefail
 cd "$(dirname "$(readlink -f "$0")")"
 
-force=0; replace_omarchy=0
+force=0; replace_omarchy=0; neutral=0
 for a in "$@"; do
   case $a in
     --force) force=1;;
     --replace-omarchy) replace_omarchy=1;;
-    -h|--help) sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//'; exit 0;;
+    --neutral) neutral=1;;
+    -h|--help) sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'; exit 0;;
     *) echo "unknown option: $a" >&2; exit 2;;
   esac
 done
@@ -95,12 +98,22 @@ for o in json.load(sys.stdin):
 prio=$((prio + 1))
 say "Speaker sink: $spk (tuned sink priority $prio)"
 
-# --- keep an existing balance trim ---------------------------------------
-trim_l=1.0; trim_r=1.0
+# --- balance trim: keep an existing one, else the model default -----------
+# XPS 14: the right side measured ~6.6 dB louder by ear (one unit, 2026-11-02;
+# another owner reports the same lean upstream). Start there; adjust with
+# speaker-balance. XPS 16 / other: no data yet, start neutral.
+# --neutral starts at 0 dB instead.
+case $sku in
+  0DB9) trim_l=1.0; trim_r=0.4677; default_note="XPS 14 default: right side down 6.6 dB";;
+  *)    trim_l=1.0; trim_r=1.0;    default_note="neutral (no measured default for this model yet)";;
+esac
+((neutral)) && { trim_l=1.0; trim_r=1.0; default_note="neutral (--neutral)"; }
 if [[ -f $frag ]]; then
   trim_l=$(grep -oP 'name = trim_l label = linear control = \{ "Mult" = \K[0-9.]+' "$frag" || echo 1.0)
   trim_r=$(grep -oP 'name = trim_r label = linear control = \{ "Mult" = \K[0-9.]+' "$frag" || echo 1.0)
   say "Keeping your balance trim (L x$trim_l, R x$trim_r)."
+else
+  say "Balance: $default_note. Fine-tune by ear with speaker-balance."
 fi
 
 # --- install -------------------------------------------------------------
@@ -148,7 +161,7 @@ case ":$PATH:" in *":$bin:"*) ;; *) warn "$bin is not on your PATH; add it to ru
 cat <<EOF
 
   Next:
-    speaker-balance 2          set the left/right balance by ear (+ = right side down)
+    speaker-balance            show the balance; fine-tune by ear (see README: Balance)
     speaker-ab calibrate       measure raw vs tuned loudness on this laptop
     speaker-ab raw | tuned     compare by ear at matched volume
     sudo ~/.local/bin/xps-speaker-id   check the amps loaded the right Dell tuning
