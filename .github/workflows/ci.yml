@@ -1,0 +1,28 @@
+name: CI
+
+# Lint the scripts and check the tuning template renders to a config PipeWire
+# can parse. No audio hardware needed.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Shellcheck
+        run: shellcheck -S warning install.sh uninstall.sh bin/*
+
+      - name: Render the template
+        run: |
+          sed -e 's|@SPEAKER_SINK@|alsa_output.test.HiFi__Speaker__sink|' -e 's|@PRIORITY@|713|g' \
+              -e 's|@TRIM_L@|1.0|' -e 's|@TRIM_R@|0.4677|' config/90-tuning.conf.in > rendered.conf
+          ! grep -n '@[A-Z_]*@' rendered.conf
+          test "$(grep -c 'label = bq_' rendered.conf)" -eq 26
+          grep -q '"g_in"  = 1.539' rendered.conf

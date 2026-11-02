@@ -1,0 +1,52 @@
+#!/bin/bash
+# speaker-balance [dB|reset]  -- left/right trim for the tuned XPS speakers.
+#
+#   speaker-balance            show the current trim
+#   speaker-balance 2          turn the RIGHT side down 2 dB
+#   speaker-balance -1.5       turn the LEFT side down 1.5 dB
+#   speaker-balance 0          neutral
+#
+# Applies live and is saved in the tuning config, so it survives reboots and
+# reinstalls. Set it by ear with something playing that has a centred voice.
+set -euo pipefail
+CONF="${XDG_CONFIG_HOME:-$HOME/.config}/pipewire/xps-speaker-tuning.conf.d/90-tuning.conf"
+NODE=xps_speaker_tuning
+[[ -f $CONF ]] || { echo "Not installed: $CONF missing (run install.sh)." >&2; exit 1; }
+
+current() {
+  local l r
+  l=$(grep -oP 'name = trim_l label = linear control = \{ "Mult" = \K[0-9.]+' "$CONF")
+  r=$(grep -oP 'name = trim_r label = linear control = \{ "Mult" = \K[0-9.]+' "$CONF")
+  python3 -I -c '
+import math,sys
+l,r=map(float,sys.argv[1:])
+db=lambda g: -20*math.log10(g)
+if l==r==1.0: print("balance: neutral (0 dB)")
+elif r<1.0: print(f"balance: right side down {db(r):.1f} dB  (L x{l}, R x{r})")
+else: print(f"balance: left side down {db(l):.1f} dB  (L x{l}, R x{r})")' "$l" "$r"
+}
+
+if [[ $# -eq 0 ]]; then current; exit 0; fi
+arg=$1; [[ $arg == reset ]] && arg=0
+[[ $arg =~ ^-?[0-9]+(\.[0-9]+)?$ ]] || { echo "usage: speaker-balance [dB|reset]" >&2; exit 2; }
+
+read -r L R < <(python3 -I -c '
+import sys
+d=float(sys.argv[1])
+if abs(d)>20: sys.exit("refusing more than 20 dB")
+g=round(10**(-abs(d)/20),4)
+print(*((1.0,g) if d>0 else (g,1.0)))' "$arg")
+
+id=$(pw-dump | python3 -I -c '
+import json,sys
+for o in json.load(sys.stdin):
+  if ((o.get("info") or {}).get("props") or {}).get("node.name")==sys.argv[1]: print(o["id"]); break' "$NODE")
+if [[ -n $id ]]; then
+  pw-cli s "$id" Props "{ params = [ \"trim_l:Mult\" $L \"trim_r:Mult\" $R ] }" >/dev/null
+else
+  echo "note: tuning sink not running; saved for next start" >&2
+fi
+tmp=$(mktemp "$CONF.XXXXXX")
+sed -E "s/(name = trim_l label = linear control = \{ \"Mult\" = )[0-9.]+/\1$L/; s/(name = trim_r label = linear control = \{ \"Mult\" = )[0-9.]+/\1$R/" "$CONF" >"$tmp"
+mv "$tmp" "$CONF"
+current

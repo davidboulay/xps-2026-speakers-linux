@@ -1,0 +1,90 @@
+#!/bin/bash
+# speaker-ab [raw|tuned|calibrate]  -- loudness-matched A/B of the laptop speakers.
+#
+#   speaker-ab raw        play everything on the raw speakers (no tuning, no
+#                         balance trim), turned down so it is as loud as the tuning
+#   speaker-ab tuned      back to the tuning (also restores the raw sink to 100%)
+#   speaker-ab            toggle
+#
+# It only moves the streams that are playing; it never changes your default
+# output (a pinned default would stop docks and headphones taking over). A
+# stream that starts mid-comparison plays on the tuning.
+#   speaker-ab calibrate  measure the raw-vs-tuned level gap on this machine with
+#                         two seconds of quiet pink noise per path, and save it
+#
+# Louder almost always sounds "better", which is why the comparison is matched.
+# Leave the volume keys alone while comparing, and finish on `speaker-ab tuned`.
+set -euo pipefail
+TUN=xps_speaker_tuning
+STATE="${XDG_STATE_HOME:-$HOME/.local/state}/xps-2026-speakers"
+OFFSET_FILE=$STATE/ab-offset-db
+OFFSET=$(cat "$OFFSET_FILE" 2>/dev/null || echo 6.6)   # measured on an XPS 14, 2026-11-02
+
+RAW=$(pw-dump | python3 -I -c '
+import json,sys
+for o in json.load(sys.stdin):
+  p=((o.get("info") or {}).get("props") or {})
+  if p.get("node.name")=="xps_speaker_tuning_output": print(p.get("target.object","")); break')
+[[ -n $RAW ]] || { echo "Tuning sink not running (systemctl --user status xps-speaker-tuning)." >&2; exit 1; }
+
+# Move only app streams on the speaker sinks; never the tuning's own output (a cycle).
+move_all() {
+  local ids; ids=$(pactl list short sinks | awk -v a="$RAW" -v b="$TUN" '$2==a||$2==b{print $1}')
+  pactl -f json list sink-inputs | python3 -I -c '
+import json,sys
+ok=set(sys.argv[1].split())
+for s in json.load(sys.stdin):
+  if str(s["sink"]) in ok and s["properties"].get("node.name")!="xps_speaker_tuning_output": print(s["index"])' "$ids" |
+  while read -r i; do pactl move-sink-input "$i" "$1" 2>/dev/null || true; done
+}
+vol_pct() { pactl get-sink-volume "$1" | grep -oE '[0-9]+%' | head -1 | tr -d %; }
+# pactl volumes are cubic: dB = 60 * log10(fraction)
+minus_db() { python3 -I -c 'import math,sys; p=max(int(sys.argv[1])/100,1e-4); print(max(1,round(100*10**((60*math.log10(p)-float(sys.argv[2]))/60))))' "$1" "$2"; }
+
+calibrate() {
+  local tmp; tmp=$(mktemp -d); trap 'rm -rf "$tmp"' RETURN
+  python3 -I - "$tmp/pink.wav" <<'PY'
+import wave,struct,random,sys
+random.seed(1); b=[0.0]*7; out=[]
+for i in range(48000*2):
+  x=random.uniform(-1,1)
+  b[0]=0.99886*b[0]+x*0.0555179; b[1]=0.99332*b[1]+x*0.0750759; b[2]=0.969*b[2]+x*0.153852
+  b[3]=0.8665*b[3]+x*0.3104856; b[4]=0.55*b[4]+x*0.5329522; b[5]=-0.7616*b[5]-x*0.016898
+  p=(sum(b[:6])+b[6]+x*0.5362)*0.11; b[6]=x*0.115926
+  v=int(max(-1,min(1,p))*8000); out.append(struct.pack("<hh",v,v))
+w=wave.open(sys.argv[1],"wb"); w.setnchannels(2); w.setsampwidth(2); w.setframerate(48000); w.writeframes(b"".join(out))
+PY
+  # Measure the LEFT channel at the speaker sink's input: the balance trim only
+  # ever turns one side down, and the default is to turn the right down.
+  meas() {
+    rm -f "$tmp/m.wav"
+    timeout 3.2 pw-record --target "$RAW" -P '{ stream.capture.sink=true }' --rate 48000 --channels 2 --format s16 "$tmp/m.wav" &
+    sleep 0.4; pw-play --target "$1" "$tmp/pink.wav"; wait
+    python3 -I -c '
+import wave,struct,math,sys
+w=wave.open(sys.argv[1]); d=w.readframes(w.getnframes()); s=struct.unpack("<%dh"%(len(d)//2),d)
+L=s[0::2]; print(20*math.log10(math.sqrt(sum(v*v for v in L)/len(L))+1e-9))' "$tmp/m.wav"
+  }
+  local v rawv t r off
+  v=$(vol_pct $TUN); rawv=$(vol_pct "$RAW")
+  echo "Playing two seconds of quiet noise through each path..."
+  t=$(meas $TUN)
+  pactl set-sink-volume "$RAW" "${v}%"; r=$(meas "$RAW"); pactl set-sink-volume "$RAW" "${rawv}%"
+  off=$(python3 -I -c 'import sys; print(round(float(sys.argv[1])-float(sys.argv[2]),1))' "$r" "$t")
+  mkdir -p "$STATE"; echo "$off" >"$OFFSET_FILE"
+  echo "raw is $off dB louder than tuned at the same volume; saved."
+}
+
+MODE_FILE=$STATE/ab-mode
+mode=${1:-$([[ $(cat "$MODE_FILE" 2>/dev/null) == raw ]] && echo tuned || echo raw)}
+case $mode in
+  raw)
+    nv=$(minus_db "$(vol_pct $TUN)" "$OFFSET")
+    pactl set-sink-volume "$RAW" "${nv}%"; move_all "$RAW"; mkdir -p "$STATE"; echo raw >"$MODE_FILE"
+    echo "A = RAW speakers (no tuning, no balance trim), level-matched at ${nv}% (-$OFFSET dB)";;
+  tuned)
+    move_all $TUN; pactl set-sink-volume "$RAW" 100%; rm -f "$MODE_FILE"
+    echo "B = TUNED (EQ + limiter + balance trim)";;
+  calibrate) calibrate;;
+  *) echo "usage: speaker-ab [raw|tuned|calibrate]" >&2; exit 2;;
+esac

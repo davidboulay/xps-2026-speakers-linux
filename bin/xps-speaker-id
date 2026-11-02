@@ -1,0 +1,80 @@
+#!/bin/bash
+# xps-speaker-id [--apply|--remove]  -- check which Cirrus speaker tuning the
+# amplifiers loaded, against the speaker-ID pin they should have read.
+#
+# Dell XPS 14 DA14260 (SKU 0DB9) / XPS 16 DA16260 (0DBA): the four CS35L57 amps
+# pick their Dell tuning file (spkid0 or spkid1) from a speaker-ID GPIO. The
+# BIOS points them at GPP_F_20 (pin 20, already claimed as "wake"); Cirrus says
+# the real speaker-ID line is GPP_E_20 (pin 46). See
+# https://github.com/thesofproject/linux/issues/5725
+#
+#   (no option)  read-only report: pin 46, and the file each amp loaded
+#   --apply      if pin 46 reads 1 and the amps loaded spkid0, install an override
+#                in /usr/lib/firmware/updates/cirrus (symlinks, owned by no
+#                package, searched before /usr/lib/firmware) -- reboot to load
+#   --remove     delete that override
+#
+# Needs root (debugfs). Never reloads drivers on a live system.
+set -euo pipefail
+[[ $(id -u) == 0 ]] || { echo "Run with sudo." >&2; exit 1; }
+mode=${1:-report}
+FW=/usr/lib/firmware/cirrus
+OVR=/usr/lib/firmware/updates/cirrus
+
+sku=$(tr 'A-Z' 'a-z' </sys/class/dmi/id/product_sku 2>/dev/null || true)
+case $sku in 0db9|0dba) ;; *) echo "SKU '${sku:-unknown}' is not an XPS 14 (0DB9) / XPS 16 (0DBA); nothing to check."; exit 0;; esac
+tag="1028${sku}"
+
+if [[ $mode == --remove ]]; then
+  if compgen -G "$OVR/cs35l57-*-$tag-spkid0*" >/dev/null; then
+    rm -f "$OVR"/cs35l57-*-"$tag"-spkid0*; rmdir --ignore-fail-on-non-empty "$OVR" /usr/lib/firmware/updates 2>/dev/null || true
+    echo "Override removed. Reboot to load the stock selection."
+  else echo "No override installed."; fi
+  exit 0
+fi
+
+mountpoint -q /sys/kernel/debug || mount -t debugfs none /sys/kernel/debug
+pins=$(grep -l 'GPP_E_20' /sys/kernel/debug/pinctrl/*/pins 2>/dev/null | head -1 || true)
+[[ -n $pins ]] || { echo "Cannot find GPP_E_20 in /sys/kernel/debug/pinctrl/*/pins."; exit 1; }
+line=$(grep -E '\(GPP_E_20\)' "$pins")
+dw0=$(awk '{for(i=1;i<=NF;i++) if($i ~ /^0x/){print $i; exit}}' <<<"$line")
+pin=$(( (dw0 >> 1) & 1 ))          # Intel pad config DW0 bit 1 = RX state
+want=spkid$pin
+
+echo "Model:            Dell XPS SKU ${sku^^} (firmware tag $tag)"
+echo "Speaker-ID pin:   GPP_E_20 reads $pin  ($line)"
+echo "Correct tuning:   $want"
+echo
+loaded=(); wrong=0
+for d in /sys/kernel/debug/asoc/*/sdw:*:01fa:3557:*/DSP1; do
+  [[ -r $d/bin_file_name ]] || continue
+  bin=$(cat "$d/bin_file_name"); amp=$(basename "$(dirname "$d")")
+  got=$(grep -oE 'spkid[01]' <<<"$bin" || echo '?')
+  printf '  %-26s %s' "$amp" "$(basename "$bin")"
+  if [[ $got == "$want" ]]; then echo "   ok"; else echo "   WRONG (wants $want)"; wrong=1; fi
+  loaded+=("$got")
+done
+[[ ${#loaded[@]} -gt 0 ]] || { echo "No CS35L57 DSP entries in debugfs: are the amps bound? (aplay -l)"; exit 1; }
+echo
+if compgen -G "$OVR/cs35l57-*-$tag-spkid0*" >/dev/null; then echo "Override present in $OVR (installed earlier)."; fi
+
+if [[ $wrong == 0 ]]; then
+  echo "All amps loaded the tuning that matches the pin. Nothing to fix here."
+  [[ $mode == --apply ]] && echo "(--apply: nothing to do.)"
+  exit 0
+fi
+if [[ $want != spkid1 ]]; then
+  echo "Amps loaded spkid1 but the pin reads 0. Not handled automatically; please report it on the issue above."
+  exit 1
+fi
+if [[ $mode != --apply ]]; then
+  echo "Your amps loaded spkid0 but your speakers are spkid1. Fix: sudo $0 --apply, then reboot."
+  exit 0
+fi
+install -d -m 755 "$OVR"; n=0
+for f in "$FW"/cs35l57-*-"$tag"-spkid1*; do
+  [[ -e $f ]] || continue
+  b=$(basename "$f"); ln -sfn "$f" "$OVR/${b/spkid1/spkid0}"; n=$((n+1))
+done
+for l in "$OVR"/cs35l57-*-"$tag"-spkid0*; do [[ -e $l ]] || { echo "dangling: $l"; exit 1; }; done
+echo "Installed $n links in $OVR. Reboot, then run this again: every amp should say ok."

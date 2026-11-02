@@ -1,0 +1,22 @@
+[Unit]
+Description=Dell XPS 2026 speaker tuning (PipeWire filter-chain)
+Documentation=https://github.com/davidboulay/xps-2026-speakers-linux
+# WirePlumber does the linking; starting before it risks linking the output
+# before the speaker device has been discovered.
+After=pipewire.service wireplumber.service
+Requires=pipewire.service
+Wants=wireplumber.service
+# The filter-chain loses its connection when PipeWire goes away.
+PartOf=pipewire.service
+
+[Service]
+Type=simple
+# Hosted as its own PipeWire client (not a pipewire.conf.d drop-in): it can be
+# switched on and off without restarting the audio daemon, and a broken config
+# only breaks this service.
+ExecStart=/usr/bin/pipewire -c xps-speaker-tuning.conf
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=pipewire.service
